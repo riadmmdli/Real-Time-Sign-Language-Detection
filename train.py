@@ -1,73 +1,87 @@
-import cv2
-import numpy as np
-import math
 import tensorflow as tf
-from tensorflow.keras.models import load_model
-from cvzone.HandTrackingModule import HandDetector
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras import layers, models, callbacks
+import os
 
-# Load model
-model = load_model("C:/Users/riadm/Desktop/Real Time Sign Language Detection/Data")
+# Parameters
+IMG_SIZE = 224
+BATCH_SIZE = 32
+EPOCHS = 50
+DATA_DIR = "C:/Users/riadm/Desktop/Real Time Sign Language Detection/Data"
+MODEL_PATH = "sign_language_best_model.h5"
 
-# Set constants
-offset = 20
-imgSize = 300
-labels = ['Hello', 'I Love You', 'No', 'Okay', 'Thank you', 'Yes']
+# 1. Data Augmentation & Normalization
+datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.2,
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    zoom_range=0.1,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
 
-# Webcam and detector
-cap = cv2.VideoCapture(0)
-detector = HandDetector(maxHands=1)
+# 2. Load training and validation data
+train_gen = datagen.flow_from_directory(
+    DATA_DIR,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    subset='training',
+    shuffle=True
+)
 
-while True:
-    success, img = cap.read()
-    hands, img = detector.findHands(img)
+val_gen = datagen.flow_from_directory(
+    DATA_DIR,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    subset='validation'
+)
 
-    if hands:
-        hand = hands[0]
-        x, y, w, h = hand['bbox']
+# 3. Load MobileNetV2 base
+base_model = MobileNetV2(input_shape=(IMG_SIZE, IMG_SIZE, 3),
+                         include_top=False,
+                         weights='imagenet')
+base_model.trainable = False  # Freeze base layers
 
-        # White image for background
-        imgWhite = np.ones((imgSize, imgSize, 3), np.uint8) * 255
+# 4. Build model
+model = models.Sequential([
+    base_model,
+    layers.GlobalAveragePooling2D(),
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.3),
+    layers.Dense(train_gen.num_classes, activation='softmax')
+])
 
-        # Crop the hand
-        imgCrop = img[y - offset:y + h + offset, x - offset:x + w + offset]
+# 5. Compile model
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-        aspectRatio = h / w
+# 6. Callbacks
+checkpoint = callbacks.ModelCheckpoint(
+    MODEL_PATH,
+    monitor='val_accuracy',
+    save_best_only=True,
+    verbose=1
+)
 
-        if aspectRatio > 1:
-            k = imgSize / h
-            wCal = math.ceil(k * w)
-            imgResize = cv2.resize(imgCrop, (wCal, imgSize))
-            wGap = math.ceil((imgSize - wCal) / 2)
-            imgWhite[:, wGap:wCal + wGap] = imgResize
-        else:
-            k = imgSize / w
-            hCal = math.ceil(k * h)
-            imgResize = cv2.resize(imgCrop, (imgSize, hCal))
-            hGap = math.ceil((imgSize - hCal) / 2)
-            imgWhite[hGap:hCal + hGap, :] = imgResize
+early_stop = callbacks.EarlyStopping(
+    monitor='val_loss',
+    patience=5,
+    restore_best_weights=True
+)
 
-        # Preprocess for prediction
-        imgInput = cv2.resize(imgWhite, (224, 224))  # Resize for model input
-        imgInput = imgInput.astype("float32") / 255.0
-        imgInput = np.expand_dims(imgInput, axis=0)
+# 7. Train model
+history = model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=EPOCHS,
+    callbacks=[checkpoint, early_stop]
+)
 
-        # Prediction
-        prediction = model.predict(imgInput)
-        index = np.argmax(prediction)
-        confidence = np.max(prediction)
-
-        # Display result
-        label = f"{labels[index]} ({confidence*100:.1f}%)"
-        cv2.putText(img, label, (x, y - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.rectangle(img, (x - offset, y - offset),
-                      (x + w + offset, y + h + offset), (255, 0, 255), 2)
-
-    # Show camera feed
-    cv2.imshow("Webcam", img)
-    key = cv2.waitKey(1)
-    if key == ord("q"):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+# 8. Save final model (optional)
+model.save("sign_language_final_model.h5")
