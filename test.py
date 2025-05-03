@@ -6,7 +6,7 @@ from tensorflow.keras.models import load_model
 from cvzone.HandTrackingModule import HandDetector
 
 # Load model
-model = load_model("C:/Users/riadm/Desktop/Real Time Sign Language Detection/sign_language_best_model.h5")
+model = load_model("C:/Users/riadm/Desktop/Real Time Sign Language Detection/sign_language_mobilenetv2_model.h5")
 
 # Set constants
 offset = 20
