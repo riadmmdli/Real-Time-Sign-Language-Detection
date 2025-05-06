@@ -8,10 +8,10 @@ from cvzone.HandTrackingModule import HandDetector
 # Load model
 model = load_model("C:/Users/riadm/Desktop/Real Time Sign Language Detection/sign_language_mobilenetv2_model.h5")
 
-# Set constants
+# Constants
 offset = 20
 imgSize = 300
-labels = ['Hello', 'I Love You', 'No', 'Okay', 'Thank you', 'Yes']
+labels = ['Call me', 'Dislike', 'Hello', 'I Love You', 'Like', 'No', 'Okay', 'Peace', 'Thank you', 'Yes']
 
 # Webcam and detector
 cap = cv2.VideoCapture(0)
@@ -19,54 +19,72 @@ detector = HandDetector(maxHands=1)
 
 while True:
     success, img = cap.read()
+    if not success:
+        break
+
     hands, img = detector.findHands(img)
+    height, width, _ = img.shape
 
     if hands:
         hand = hands[0]
         x, y, w, h = hand['bbox']
 
-        # White image for background
-        imgWhite = np.ones((imgSize, imgSize, 3), np.uint8) * 255
+        # Safe crop coordinates
+        x1 = max(0, x - offset)
+        y1 = max(0, y - offset)
+        x2 = min(width, x + w + offset)
+        y2 = min(height, y + h + offset)
 
-        # Crop the hand
-        imgCrop = img[y - offset:y + h + offset, x - offset:x + w + offset]
+        imgCrop = img[y1:y2, x1:x2]
 
-        aspectRatio = h / w
-
-        if aspectRatio > 1:
-            k = imgSize / h
-            wCal = math.ceil(k * w)
-            imgResize = cv2.resize(imgCrop, (wCal, imgSize))
-            wGap = math.ceil((imgSize - wCal) / 2)
-            imgWhite[:, wGap:wCal + wGap] = imgResize
+        if imgCrop.size == 0:
+            # 🟡 Show message if hand is too close to frame edge
+            cv2.putText(img, "Hand too close to edge", (50, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         else:
-            k = imgSize / w
-            hCal = math.ceil(k * h)
-            imgResize = cv2.resize(imgCrop, (imgSize, hCal))
-            hGap = math.ceil((imgSize - hCal) / 2)
-            imgWhite[hGap:hCal + hGap, :] = imgResize
+            # White canvas
+            imgWhite = np.ones((imgSize, imgSize, 3), np.uint8) * 255
+            aspectRatio = h / w
 
-        # Preprocess for prediction
-        imgInput = cv2.resize(imgWhite, (224, 224))  # Resize for model input
-        imgInput = imgInput.astype("float32") / 255.0
-        imgInput = np.expand_dims(imgInput, axis=0)
+            try:
+                if aspectRatio > 1:
+                    k = imgSize / h
+                    wCal = math.ceil(k * w)
+                    imgResize = cv2.resize(imgCrop, (wCal, imgSize))
+                    wGap = math.ceil((imgSize - wCal) / 2)
+                    imgWhite[:, wGap:wCal + wGap] = imgResize
+                else:
+                    k = imgSize / w
+                    hCal = math.ceil(k * h)
+                    imgResize = cv2.resize(imgCrop, (imgSize, hCal))
+                    hGap = math.ceil((imgSize - hCal) / 2)
+                    imgWhite[hGap:hCal + hGap, :] = imgResize
 
-        # Prediction
-        prediction = model.predict(imgInput)
-        index = np.argmax(prediction)
-        confidence = np.max(prediction)
+                # Preprocess
+                imgInput = cv2.resize(imgWhite, (224, 224)).astype("float32") / 255.0
+                imgInput = np.expand_dims(imgInput, axis=0)
 
-        # Display result
-        label = f"{labels[index]} ({confidence*100:.1f}%)"
-        cv2.putText(img, label, (x, y - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.rectangle(img, (x - offset, y - offset),
-                      (x + w + offset, y + h + offset), (255, 0, 255), 2)
+                # Predict
+                prediction = model.predict(imgInput)
+                index = np.argmax(prediction)
+                confidence = np.max(prediction)
 
-    # Show camera feed
+                # Show result
+                label = f"{labels[index]} ({confidence*100:.1f}%)"
+                cv2.putText(img, label, (x, y - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 2)
+            except:
+                cv2.putText(img, "Processing error", (50, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    else:
+        cv2.putText(img, "No hand detected", (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
+
+    # Show webcam feed
     cv2.imshow("Webcam", img)
-    key = cv2.waitKey(1)
-    if key == ord("q"):
+    if cv2.waitKey(1) == ord("q"):
         break
 
 cap.release()
